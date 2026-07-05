@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from textwrap import dedent
+from uuid import uuid4
 
 import pandas as pd
 import streamlit as st
@@ -18,6 +19,7 @@ st.set_page_config(page_title=APP_NAME, page_icon="chart_with_upwards_trend", la
 
 def main() -> None:
     inject_theme()
+    register_visit()
     render_header()
     render_simple_dashboard()
 
@@ -114,6 +116,10 @@ def inject_theme() -> None:
             background: #def3e6;
             color: #177245;
         }
+        .stock-badge.invalid {
+            background: #fee2e2;
+            color: #b91c1c;
+        }
         .stock-badge.watch {
             background: #efe7db;
             color: #6b5d52;
@@ -157,6 +163,13 @@ def inject_theme() -> None:
             padding: 10px 12px 14px;
             box-shadow: 0 14px 34px rgba(88, 65, 43, 0.05);
         }
+        .summary-danger {
+            margin-top: 0.35rem;
+            text-align: center;
+            color: #b91c1c;
+            font-size: 0.82rem;
+            font-weight: 800;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -174,6 +187,11 @@ def render_header() -> None:
         """,
         unsafe_allow_html=True,
     )
+    stats = get_visit_stats()
+    visit_cols = st.columns(3)
+    visit_cols[0].metric("Visites app", f"{stats['total_visits']}")
+    visit_cols[1].metric("Visiteurs uniques", f"{stats['unique_visitors']}")
+    visit_cols[2].caption("Compteur simple depuis le dernier redemarrage de l'application")
 
 
 def render_simple_dashboard() -> None:
@@ -287,7 +305,7 @@ def render_simple_dashboard_table(rows: pd.DataFrame) -> None:
         if row["Statut"] in {"Vente possible", "Resistance atteinte"}:
             return ["background-color: #dcfce7"] * len(row)
         if row["Statut"] == "Setup invalide":
-            return ["background-color: #fef3c7"] * len(row)
+            return ["background-color: #fee2e2"] * len(row)
         return [""] * len(row)
 
     st.markdown('<div class="simple-table-wrap">', unsafe_allow_html=True)
@@ -341,6 +359,7 @@ def render_summary(display: pd.DataFrame) -> None:
     summary_cards[1].metric("A surveiller achat", f"{buy_zone_count}")
     summary_cards[2].metric("A surveiller vente", f"{sell_zone_count}")
     summary_cards[3].metric("A eviter", f"{int(summary.get('Setup invalide', 0))}")
+    summary_cards[3].markdown('<div class="summary-danger">Rouge = a ne pas prendre</div>', unsafe_allow_html=True)
 
 
 def render_simple_stock_cards(rows: pd.DataFrame) -> None:
@@ -357,6 +376,8 @@ def render_simple_stock_cards(rows: pd.DataFrame) -> None:
             tone = "buy"
         elif status in {"Vente possible", "Resistance atteinte"}:
             tone = "sell"
+        elif status == "Setup invalide":
+            tone = "invalid"
 
         reference_date = pd.to_datetime(row.get("date_reference"), errors="coerce")
         display_date = reference_date.strftime("%Y-%m-%d") if not pd.isna(reference_date) else "-"
@@ -421,6 +442,40 @@ def format_numeric(value: object, suffix: str = "", decimals: int = 2) -> str:
     if pd.isna(numeric):
         return "-"
     return f"{float(numeric):.{decimals}f}{suffix}"
+
+
+@st.cache_resource
+def get_visit_store() -> dict[str, object]:
+    return {
+        "total_visits": 0,
+        "unique_visitors": set(),
+    }
+
+
+def register_visit() -> None:
+    if "rebondscope_visitor_id" not in st.session_state:
+        st.session_state["rebondscope_visitor_id"] = str(uuid4())
+
+    if st.session_state.get("rebondscope_visit_registered"):
+        return
+
+    store = get_visit_store()
+    visitor_id = str(st.session_state["rebondscope_visitor_id"])
+    store["total_visits"] = int(store["total_visits"]) + 1
+    unique_visitors = store["unique_visitors"]
+    if isinstance(unique_visitors, set):
+        unique_visitors.add(visitor_id)
+    st.session_state["rebondscope_visit_registered"] = True
+
+
+def get_visit_stats() -> dict[str, int]:
+    store = get_visit_store()
+    unique_visitors = store["unique_visitors"]
+    unique_count = len(unique_visitors) if isinstance(unique_visitors, set) else 0
+    return {
+        "total_visits": int(store["total_visits"]),
+        "unique_visitors": unique_count,
+    }
 
 
 @st.cache_data(show_spinner=False)
