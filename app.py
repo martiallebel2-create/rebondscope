@@ -263,7 +263,8 @@ def render_header() -> None:
 @st.fragment(run_every="60s")
 def render_simple_dashboard() -> None:
     st.info(
-        "Supports et resistances sont analyses automatiquement pour Tesla, Palantir, Nvidia, AMD, Amazon, AST SpaceMobile, Stellantis et SpaceX."
+        "Supports et resistances sont analyses automatiquement pour Tesla, Palantir, Nvidia, AMD, Amazon, "
+        "AST SpaceMobile, STMicroelectronics, Stellantis et SpaceX."
     )
     with st.expander("Comment lire cet ecran", expanded=False):
         st.write(
