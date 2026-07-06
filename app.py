@@ -290,7 +290,9 @@ def render_simple_dashboard() -> None:
         )
 
     controls = st.columns([1, 1, 2])
-    lookback_days = controls[0].selectbox("Historique", [90, 120, 180, 252], index=2)
+    lookback_sessions = controls[0].selectbox(
+        "Historique (seances)", [2, 5, 10, 20, 30, 90, 120, 180, 252], index=1
+    )
     buy_rebound_pct = controls[1].number_input("Rebond technique (%)", min_value=0.5, value=1.5, step=0.1)
     controls[2].button("Actualiser les niveaux", type="primary", use_container_width=True)
 
@@ -306,7 +308,8 @@ def render_simple_dashboard() -> None:
         ratio_ideal=float(ratio_ideal),
         min_rebound_confirmation_pct=float(rebound_confirmation_pct),
     )
-    start_date = date.today() - timedelta(days=int(lookback_days))
+    calendar_days = max(int(lookback_sessions) * 2 + 7, 14)
+    start_date = date.today() - timedelta(days=calendar_days)
     end_date = date.today() + timedelta(days=1)
     rows: list[dict[str, object]] = []
     errors: list[str] = []
@@ -331,7 +334,7 @@ def render_simple_dashboard() -> None:
     with st.spinner("Calcul automatique des niveaux..."):
         for ticker, label in TRACKED_SYMBOLS:
             try:
-                prices = cached_download_prices(ticker, start_date, end_date)
+                prices = cached_download_prices(ticker, start_date, end_date).tail(int(lookback_sessions)).reset_index(drop=True)
                 try:
                     quote = cached_download_latest_quote(ticker)
                     current_price = float(quote["price"])
