@@ -14,6 +14,7 @@ TRACKED_SYMBOLS: tuple[tuple[str, str], ...] = (
     ("AMD", "AMD"),
     ("AMZN", "Amazon"),
     ("ASTS", "AST SpaceMobile"),
+    ("STMPA.PA", "STMicroelectronics"),
     ("STLAM.MI", "Stellantis"),
     ("SPCX", "SpaceX"),
 )
