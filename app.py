@@ -260,6 +260,7 @@ def render_header() -> None:
     visit_cols[2].caption("Compteur simple depuis le dernier redemarrage de l'application")
 
 
+@st.fragment(run_every="60s")
 def render_simple_dashboard() -> None:
     st.info(
         "Supports et resistances sont analyses automatiquement pour Tesla, Palantir, Nvidia, AMD, Amazon, AST SpaceMobile, Stellantis et SpaceX."
@@ -281,13 +282,10 @@ def render_simple_dashboard() -> None:
         buy_fee = strategy_cols[1].number_input("Frais achat (EUR)", min_value=0.0, value=1.0, step=0.5)
         sell_fee = strategy_cols[2].number_input("Frais vente (EUR)", min_value=0.0, value=1.0, step=0.5)
         tolerance_pct = strategy_cols[3].number_input("Tolerance niveaux (%)", min_value=0.1, value=0.5, step=0.1)
-        strategy_cols_2 = st.columns(4)
+        strategy_cols_2 = st.columns(3)
         ratio_min = strategy_cols_2[0].number_input("Ratio minimum", min_value=1.0, value=1.8, step=0.1)
         ratio_ideal = strategy_cols_2[1].number_input("Ratio ideal", min_value=1.0, value=2.0, step=0.1)
         min_contacts = strategy_cols_2[2].number_input("Contacts minimum", min_value=1, value=2, step=1)
-        rebound_confirmation_pct = strategy_cols_2[3].number_input(
-            "Rebond mini confirmation (%)", min_value=0.1, value=1.0, step=0.1
-        )
 
     controls = st.columns([1, 1, 2])
     lookback_sessions = controls[0].selectbox(
@@ -306,7 +304,6 @@ def render_simple_dashboard() -> None:
         sell_fee_eur=float(sell_fee),
         ratio_min_acceptable=float(ratio_min),
         ratio_ideal=float(ratio_ideal),
-        min_rebound_confirmation_pct=float(rebound_confirmation_pct),
     )
     calendar_days = max(int(lookback_sessions) * 2 + 7, 14)
     start_date = date.today() - timedelta(days=calendar_days)
@@ -354,7 +351,10 @@ def render_simple_dashboard() -> None:
         return
 
     rows_df = pd.DataFrame(rows)
-    st.caption(f"Derniere mise a jour: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
+    st.caption(
+        f"Derniere mise a jour: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')} · "
+        "actualisation automatique toutes les 60 secondes"
+    )
     rate_caption = f"Taux EUR/USD automatique: {eur_usd_rate:.4f}"
     if eur_rate_updated_at:
         rate_caption += f" (maj {eur_rate_updated_at})"
@@ -392,7 +392,9 @@ def render_simple_dashboard_table(rows: pd.DataFrame) -> None:
             "resistance_1_eur": "Resistance 1 EUR",
             "resistance_2_eur": "Resistance 2 EUR",
             "entree_confirmation_eur": "Entree confirmation EUR",
+            "entree_confirmation_s2_eur": "Entree Support 2 EUR",
             "stop_loss_eur": "Stop-loss EUR",
+            "stop_securisation_eur": "Stop securisation EUR",
             "fiabilite_support_1": "Fiabilite S1",
             "fiabilite_support_2": "Fiabilite S2",
             "fiabilite_resistance_1": "Fiabilite R1",
@@ -435,7 +437,9 @@ def render_simple_dashboard_table(rows: pd.DataFrame) -> None:
                 "Resistance 1 EUR": "{:.2f}",
                 "Resistance 2 EUR": "{:.2f}",
                 "Entree confirmation EUR": "{:.2f}",
+                "Entree Support 2 EUR": "{:.2f}",
                 "Stop-loss EUR": "{:.2f}",
+                "Stop securisation EUR": "{:.2f}",
                 "Risque/action EUR": "{:.2f}",
                 "Gain potentiel R1 EUR": "{:.2f}",
                 "Gain potentiel R2 EUR": "{:.2f}",
@@ -464,7 +468,9 @@ def render_simple_dashboard_table(rows: pd.DataFrame) -> None:
             "Fiabilite R1",
             "Fiabilite R2",
             "Entree confirmation EUR",
+            "Entree Support 2 EUR",
             "Stop-loss EUR",
+            "Stop securisation EUR",
             "Risque/action EUR",
             "Gain potentiel R1 EUR",
             "Gain potentiel R2 EUR",
@@ -494,6 +500,7 @@ def render_summary(display: pd.DataFrame) -> None:
 def render_simple_stock_cards(rows: pd.DataFrame) -> None:
     st.markdown("#### Vue cartes")
     st.caption("Cartes triees par ordre alphabetique. Tous les montants sont affiches en euros en priorite.")
+    st.caption("Le stop securite est a activer seulement apres que le cours est monte au-dessus de ce niveau.")
 
     cards = rows.sort_values(["nom", "ticker"], ignore_index=True)
     columns = st.columns(3)
@@ -548,12 +555,20 @@ def render_simple_stock_cards(rows: pd.DataFrame) -> None:
                                 <div class="stock-item-value">{format_numeric(row.get("resistance_2_eur"), " EUR")}</div>
                             </div>
                             <div>
-                                <div class="stock-item-label">Entree confirmation</div>
+                                <div class="stock-item-label">Entree Support 1</div>
                                 <div class="stock-item-value">{format_numeric(row.get("entree_confirmation_eur"), " EUR")}</div>
                             </div>
                             <div>
-                                <div class="stock-item-label">Stop-loss</div>
+                                <div class="stock-item-label">Entree Support 2</div>
+                                <div class="stock-item-value">{format_numeric(row.get("entree_confirmation_s2_eur"), " EUR")}</div>
+                            </div>
+                            <div>
+                                <div class="stock-item-label">Stop initial</div>
                                 <div class="stock-item-value">{format_numeric(row.get("stop_loss_eur"), " EUR")}</div>
+                            </div>
+                            <div>
+                                <div class="stock-item-label">Stop securite*</div>
+                                <div class="stock-item-value">{format_numeric(row.get("stop_securisation_eur"), " EUR")}</div>
                             </div>
                             <div>
                                 <div class="stock-item-label">Ratio R1</div>
