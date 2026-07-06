@@ -71,8 +71,15 @@ def build_auto_level_row(
     resistance1_contacts = max(resistance1_contacts, 1 if resistance1 == last_session_high else 0)
     resistance2_contacts = max(resistance2_contacts, 1 if resistance2 == last_session_high else 0)
 
-    entry_confirmation = max(current_price, support1 * (1 + config.min_rebound_confirmation_pct / 100.0))
+    rebound_ratio = config.buy_rebound_pct / 100.0
+    entry_confirmation = support1 * (1 + rebound_ratio)
+    entry_confirmation_s2 = support2 * (1 + rebound_ratio)
     stop_loss = support2 * (1 - tolerance_ratio)
+    security_stop = (
+        entry_confirmation + (resistance1 - entry_confirmation) / 2
+        if resistance1 > entry_confirmation
+        else None
+    )
     risk_per_share = max(entry_confirmation - stop_loss, 0.0)
     gain_r1 = max(resistance1 - entry_confirmation, 0.0)
     gain_r2 = max(resistance2 - entry_confirmation, 0.0)
@@ -106,7 +113,9 @@ def build_auto_level_row(
     support1_eur = support1 * conversion_rate
     support2_eur = support2 * conversion_rate
     entry_eur = entry_confirmation * conversion_rate
+    entry_s2_eur = entry_confirmation_s2 * conversion_rate
     stop_loss_eur = stop_loss * conversion_rate
+    security_stop_eur = security_stop * conversion_rate if security_stop is not None else None
     resistance1_eur = resistance1 * conversion_rate
     resistance2_eur = resistance2 * conversion_rate
     veille_low_eur = last_session_low * conversion_rate
@@ -132,8 +141,12 @@ def build_auto_level_row(
         "resistance_2_eur": round(resistance2_eur, 4),
         "entree_confirmation": round(entry_confirmation, 4),
         "entree_confirmation_eur": round(entry_eur, 4),
+        "entree_confirmation_s2": round(entry_confirmation_s2, 4),
+        "entree_confirmation_s2_eur": round(entry_s2_eur, 4),
         "stop_loss": round(stop_loss, 4),
         "stop_loss_eur": round(stop_loss_eur, 4),
+        "stop_securisation": round(security_stop, 4) if security_stop is not None else None,
+        "stop_securisation_eur": round(security_stop_eur, 4) if security_stop_eur is not None else None,
         "distance_support_1_pct": round((current_price / support1 - 1) * 100 if support1 else 0.0, 2),
         "distance_support_2_pct": round((current_price / support2 - 1) * 100 if support2 else 0.0, 2),
         "distance_resistance_1_pct": round((current_price / resistance1 - 1) * 100 if resistance1 else 0.0, 2),
@@ -246,6 +259,8 @@ def _infer_analysis_status(
         return "Pas interessant", "Stop-loss trop proche."
     if entry_confirmation >= resistance1:
         return "Pas interessant", "Entree trop proche de R1."
+    if current_price > entry_confirmation * (1 + config.tolerance_pct / 100.0):
+        return "Pas interessant", "Entree depassee, attendre un repli."
     if gain_r1 < risk_per_share or ratio_r1 < 1 or net_gain_r1 <= 0:
         return "Pas interessant", "Gain trop faible avant R1."
     if current_price <= support1 * 1.01 and ratio_r1 >= config.ratio_ideal:
