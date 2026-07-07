@@ -187,6 +187,40 @@ def inject_theme() -> None:
             font-weight: 800;
             color: #111827;
         }
+        .level-section {
+            margin-top: 10px;
+            padding: 10px 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            background: #ffffff;
+        }
+        .level-section-title {
+            margin-bottom: 7px;
+            color: #0b4250;
+            font-size: 0.76rem;
+            font-weight: 900;
+            letter-spacing: 0.08em;
+        }
+        .level-line {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 3px 0;
+            color: #374151;
+            font-size: 0.84rem;
+            font-weight: 700;
+        }
+        .level-line strong {
+            color: #111827;
+            white-space: nowrap;
+        }
+        .active-plan {
+            margin-top: 10px;
+            padding: 11px 12px;
+            border: 2px solid #0b4250;
+            border-radius: 12px;
+            background: #e6f4f7;
+        }
         .simple-table-wrap {
             margin-top: 1rem;
             background: rgba(255, 255, 255, 0.98);
@@ -269,9 +303,11 @@ def render_simple_dashboard() -> None:
     with st.expander("Comment lire cet ecran", expanded=False):
         st.write(
             """
-            - `Support 1 / Support 2`: zones de support utiles situees sous le prix actuel.
-            - `Resistance 1 / Resistance 2`: niveaux de blocage utiles situes au-dessus du prix actuel.
-            - `Entree confirmation`: niveau theorique de confirmation du rebond.
+            - `2 jours`: niveau du trade le plus court.
+            - `5 et 9 jours`: confirmation et contexte elargi.
+            - `20 jours et 1 mois`: structure moyen terme.
+            - `Zone active`: support le plus proche sous le cours et premiere resistance au-dessus.
+            - `Entree / stop`: calcules uniquement autour du support actif, jamais depuis un support lointain.
             - `Statut d'analyse`: Interessant, A confirmer, Vigilant ou Pas interessant.
             """
         )
@@ -288,12 +324,9 @@ def render_simple_dashboard() -> None:
         ratio_ideal = strategy_cols_2[1].number_input("Ratio ideal", min_value=1.0, value=2.0, step=0.1)
         min_contacts = strategy_cols_2[2].number_input("Contacts minimum", min_value=1, value=2, step=1)
 
-    controls = st.columns([1, 1, 2])
-    lookback_sessions = controls[0].selectbox(
-        "Historique (seances)", [2, 5, 10, 20, 30, 90, 120, 180, 252], index=1
-    )
-    buy_rebound_pct = controls[1].number_input("Rebond technique (%)", min_value=0.5, value=1.5, step=0.1)
-    controls[2].button("Actualiser les niveaux", type="primary", use_container_width=True)
+    controls = st.columns([1, 2])
+    buy_rebound_pct = controls[0].number_input("Rebond technique (%)", min_value=0.1, value=0.5, step=0.1)
+    controls[1].button("Actualiser les niveaux", type="primary", use_container_width=True)
 
     config = AutoLevelConfig(
         buy_rebound_pct=float(buy_rebound_pct),
@@ -306,8 +339,7 @@ def render_simple_dashboard() -> None:
         ratio_min_acceptable=float(ratio_min),
         ratio_ideal=float(ratio_ideal),
     )
-    calendar_days = max(int(lookback_sessions) * 2 + 7, 14)
-    start_date = date.today() - timedelta(days=calendar_days)
+    start_date = date.today() - timedelta(days=45)
     end_date = date.today() + timedelta(days=1)
     rows: list[dict[str, object]] = []
     errors: list[str] = []
@@ -332,7 +364,7 @@ def render_simple_dashboard() -> None:
     with st.spinner("Calcul automatique des niveaux..."):
         for ticker, label in TRACKED_SYMBOLS:
             try:
-                prices = cached_download_prices(ticker, start_date, end_date).tail(int(lookback_sessions)).reset_index(drop=True)
+                prices = cached_download_prices(ticker, start_date, end_date).tail(22).reset_index(drop=True)
                 try:
                     quote = cached_download_latest_quote(ticker)
                     current_price = float(quote["price"])
@@ -379,38 +411,22 @@ def render_simple_dashboard_table(rows: pd.DataFrame) -> None:
     render_summary(display)
     render_simple_stock_cards(display.copy())
 
-    table_display = display.rename(
-        columns={
-            "date_reference": "Date",
-            "nom": "Action",
-            "ticker": "Ticker",
-            "devise": "Devise",
-            "prix_actuel_eur": "Prix actuel EUR",
-            "plus_bas_veille_eur": "Plus bas veille EUR",
-            "plus_haut_veille_eur": "Plus haut veille EUR",
-            "support_1_eur": "Support 1 EUR",
-            "support_2_eur": "Support 2 EUR",
-            "resistance_1_eur": "Resistance 1 EUR",
-            "resistance_2_eur": "Resistance 2 EUR",
-            "entree_confirmation_eur": "Entree confirmation EUR",
-            "entree_confirmation_s2_eur": "Entree Support 2 EUR",
-            "stop_loss_eur": "Stop-loss EUR",
-            "stop_securisation_eur": "Stop securisation EUR",
-            "fiabilite_support_1": "Fiabilite S1",
-            "fiabilite_support_2": "Fiabilite S2",
-            "fiabilite_resistance_1": "Fiabilite R1",
-            "fiabilite_resistance_2": "Fiabilite R2",
-            "support_statut": "Statut support",
-            "risque_par_action_eur": "Risque/action EUR",
-            "gain_potentiel_r1_eur": "Gain potentiel R1 EUR",
-            "gain_potentiel_r2_eur": "Gain potentiel R2 EUR",
-            "ratio_r1": "Ratio R1",
-            "ratio_r2": "Ratio R2",
-            "gain_net_potentiel_r1_eur": "Gain net R1 EUR",
-            "gain_net_potentiel_r2_eur": "Gain net R2 EUR",
-            "perte_nette_possible_eur": "Perte nette EUR",
-            "statut": "Statut",
-            "explication": "Explication",
+    table_display = pd.DataFrame(
+        {
+            "Date": display["date_reference"],
+            "Action": display["nom"],
+            "Cours EUR": display["prix_actuel_eur"],
+            "Support actif": display.apply(lambda row: format_zone(row, "support_actif"), axis=1),
+            "Resistance active": display.apply(lambda row: format_zone(row, "resistance_active"), axis=1),
+            "Support 2j": display.apply(lambda row: format_zone(row, "support_2j"), axis=1),
+            "Resistance 2j": display.apply(lambda row: format_zone(row, "resistance_2j"), axis=1),
+            "Support 5j": display.apply(lambda row: format_zone(row, "support_5j"), axis=1),
+            "Resistance 5j": display.apply(lambda row: format_zone(row, "resistance_5j"), axis=1),
+            "Entree EUR": display["entree_confirmation_eur"],
+            "Stop EUR": display["stop_loss_eur"],
+            "Ratio": display["ratio_r1"],
+            "Statut": display["statut"],
+            "Lecture": display["explication"],
         }
     )
 
@@ -430,60 +446,13 @@ def render_simple_dashboard_table(rows: pd.DataFrame) -> None:
     st.dataframe(
         table_display.style.apply(highlight_status, axis=1).format(
             {
-                "Prix actuel EUR": "{:.2f}",
-                "Plus bas veille EUR": "{:.2f}",
-                "Plus haut veille EUR": "{:.2f}",
-                "Support 1 EUR": "{:.2f}",
-                "Support 2 EUR": "{:.2f}",
-                "Resistance 1 EUR": "{:.2f}",
-                "Resistance 2 EUR": "{:.2f}",
-                "Entree confirmation EUR": "{:.2f}",
-                "Entree Support 2 EUR": "{:.2f}",
-                "Stop-loss EUR": "{:.2f}",
-                "Stop securisation EUR": "{:.2f}",
-                "Risque/action EUR": "{:.2f}",
-                "Gain potentiel R1 EUR": "{:.2f}",
-                "Gain potentiel R2 EUR": "{:.2f}",
-                "Ratio R1": "{:.2f}",
-                "Ratio R2": "{:.2f}",
-                "Gain net R1 EUR": "{:.2f}",
-                "Gain net R2 EUR": "{:.2f}",
-                "Perte nette EUR": "{:.2f}",
+                "Cours EUR": "{:.2f}",
+                "Entree EUR": "{:.2f}",
+                "Stop EUR": "{:.2f}",
+                "Ratio": "{:.2f}",
             }
         ),
         use_container_width=True,
-        column_order=[
-            "Date",
-            "Action",
-            "Ticker",
-            "Devise",
-            "Prix actuel EUR",
-            "Plus bas veille EUR",
-            "Plus haut veille EUR",
-            "Support 1 EUR",
-            "Support 2 EUR",
-            "Resistance 1 EUR",
-            "Resistance 2 EUR",
-            "Fiabilite S1",
-            "Fiabilite S2",
-            "Fiabilite R1",
-            "Fiabilite R2",
-            "Entree confirmation EUR",
-            "Entree Support 2 EUR",
-            "Stop-loss EUR",
-            "Stop securisation EUR",
-            "Risque/action EUR",
-            "Gain potentiel R1 EUR",
-            "Gain potentiel R2 EUR",
-            "Ratio R1",
-            "Ratio R2",
-            "Gain net R1 EUR",
-            "Gain net R2 EUR",
-            "Perte nette EUR",
-            "Statut support",
-            "Statut",
-            "Explication",
-        ],
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -500,8 +469,7 @@ def render_summary(display: pd.DataFrame) -> None:
 
 def render_simple_stock_cards(rows: pd.DataFrame) -> None:
     st.markdown("#### Vue cartes")
-    st.caption("Cartes triees par ordre alphabetique. Tous les montants sont affiches en euros en priorite.")
-    st.caption("Le stop securite est a activer seulement apres que le cours est monte au-dessus de ce niveau.")
+    st.caption("Zones calculees sur 2, 5, 9, 20 et 22 seances. Montants affiches en euros.")
 
     cards = rows.sort_values(["nom", "ticker"], ignore_index=True)
     columns = st.columns(3)
@@ -538,60 +506,46 @@ def render_simple_stock_cards(rows: pd.DataFrame) -> None:
                             <strong>{format_numeric(row.get("prix_actuel_eur"), " EUR")}</strong>
                             <span>{format_numeric(row.get("prix_actuel"))} {row.get("devise", "")}</span>
                         </div>
-                        <div class="stock-grid">
-                            <div>
-                                <div class="stock-item-label">Support 1</div>
-                                <div class="stock-item-value">{format_numeric(row.get("support_1_eur"), " EUR")}</div>
-                            </div>
-                            <div>
-                                <div class="stock-item-label">Support 2</div>
-                                <div class="stock-item-value">{format_numeric(row.get("support_2_eur"), " EUR")}</div>
-                            </div>
-                            <div>
-                                <div class="stock-item-label">Resistance 1</div>
-                                <div class="stock-item-value">{format_numeric(row.get("resistance_1_eur"), " EUR")}</div>
-                            </div>
-                            <div>
-                                <div class="stock-item-label">Resistance 2</div>
-                                <div class="stock-item-value">{format_numeric(row.get("resistance_2_eur"), " EUR")}</div>
-                            </div>
-                            <div>
-                                <div class="stock-item-label">Entree Support 1</div>
-                                <div class="stock-item-value">{format_numeric(row.get("entree_confirmation_eur"), " EUR")}</div>
-                            </div>
-                            <div>
-                                <div class="stock-item-label">Entree Support 2</div>
-                                <div class="stock-item-value">{format_numeric(row.get("entree_confirmation_s2_eur"), " EUR")}</div>
-                            </div>
-                            <div>
-                                <div class="stock-item-label">Stop initial</div>
-                                <div class="stock-item-value">{format_numeric(row.get("stop_loss_eur"), " EUR")}</div>
-                            </div>
-                            <div>
-                                <div class="stock-item-label">Stop securite*</div>
-                                <div class="stock-item-value">{format_numeric(row.get("stop_securisation_eur"), " EUR")}</div>
-                            </div>
-                            <div>
-                                <div class="stock-item-label">Ratio R1</div>
-                                <div class="stock-item-value">{format_numeric(row.get("ratio_r1"))}</div>
-                            </div>
-                            <div>
-                                <div class="stock-item-label">Ratio R2</div>
-                                <div class="stock-item-value">{format_numeric(row.get("ratio_r2"))}</div>
-                            </div>
-                            <div>
-                                <div class="stock-item-label">Support</div>
-                                <div class="stock-item-value">{row.get("support_statut", "-")}</div>
-                            </div>
-                            <div>
-                                <div class="stock-item-label">Lecture</div>
-                                <div class="stock-item-value">{row.get("explication", "-")}</div>
-                            </div>
+                        <div class="level-section">
+                            <div class="level-section-title">NIVEAUX COURT TERME</div>
+                            <div class="level-line"><span>Support 2 jours</span><strong>{format_zone(row, "support_2j")}</strong></div>
+                            <div class="level-line"><span>Resistance 2 jours</span><strong>{format_zone(row, "resistance_2j")}</strong></div>
                         </div>
+                        <div class="level-section">
+                            <div class="level-section-title">NIVEAUX DE CONFIRMATION</div>
+                            <div class="level-line"><span>Support 5 jours</span><strong>{format_zone(row, "support_5j")}</strong></div>
+                            <div class="level-line"><span>Resistance 5 jours</span><strong>{format_zone(row, "resistance_5j")}</strong></div>
+                            <div class="level-line"><span>Support 9 jours</span><strong>{format_zone(row, "support_9j")}</strong></div>
+                            <div class="level-line"><span>Resistance 9 jours</span><strong>{format_zone(row, "resistance_9j")}</strong></div>
+                        </div>
+                        <div class="level-section">
+                            <div class="level-section-title">NIVEAUX STRUCTURELS</div>
+                            <div class="level-line"><span>Support 20 jours</span><strong>{format_zone(row, "support_20j")}</strong></div>
+                            <div class="level-line"><span>Resistance 20 jours</span><strong>{format_zone(row, "resistance_20j")}</strong></div>
+                            <div class="level-line"><span>Support 1 mois</span><strong>{format_zone(row, "support_1m")}</strong></div>
+                            <div class="level-line"><span>Resistance 1 mois</span><strong>{format_zone(row, "resistance_1m")}</strong></div>
+                        </div>
+                        <div class="active-plan">
+                            <div class="level-section-title">SCENARIO ACTIF</div>
+                            <div class="level-line"><span>Support actif ({row.get("support_actif_source", "-")})</span><strong>{format_zone(row, "support_actif")}</strong></div>
+                            <div class="level-line"><span>Resistance active ({row.get("resistance_active_source", "-")})</span><strong>{format_zone(row, "resistance_active")}</strong></div>
+                            <div class="level-line"><span>Entree confirmation</span><strong>{format_numeric(row.get("entree_confirmation_eur"), " EUR")}</strong></div>
+                            <div class="level-line"><span>Stop court</span><strong>{format_numeric(row.get("stop_loss_eur"), " EUR")}</strong></div>
+                            <div class="level-line"><span>Ratio rendement / risque</span><strong>{format_numeric(row.get("ratio_r1"))}</strong></div>
+                        </div>
+                        <div class="level-section"><strong>Lecture :</strong> {row.get("explication", "-")}<br><span>{row.get("contexte_support", "-")}</span></div>
                         """
                     ),
                     unsafe_allow_html=True,
                 )
+
+
+def format_zone(row: pd.Series, prefix: str) -> str:
+    low = pd.to_numeric(pd.Series([row.get(f"{prefix}_bas_eur")]), errors="coerce").iloc[0]
+    high = pd.to_numeric(pd.Series([row.get(f"{prefix}_haut_eur")]), errors="coerce").iloc[0]
+    if pd.isna(low) or pd.isna(high):
+        return "-"
+    return f"{float(low):.2f} - {float(high):.2f} EUR"
 
 
 def format_numeric(value: object, suffix: str = "", decimals: int = 2) -> str:
