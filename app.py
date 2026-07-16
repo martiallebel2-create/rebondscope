@@ -6,12 +6,12 @@ from textwrap import dedent
 from uuid import uuid4
 
 import pandas as pd
+import requests
 import streamlit as st
 
 from auto_levels import AutoLevelConfig, TRACKED_SYMBOLS, build_auto_level_row
 from exchange_rate_store import get_cached_eur_usd_rate, load_cached_eur_usd_rate
 from market_data import download_latest_quote, download_prices
-from notifier import send_telegram_message
 
 
 APP_NAME = "RebondScope"
@@ -750,6 +750,32 @@ def safe_float(value: object) -> float | None:
     if pd.isna(numeric):
         return None
     return float(numeric)
+
+
+def send_telegram_message(bot_token: str, chat_id: str, message: str) -> None:
+    token = bot_token.strip()
+    destination = chat_id.strip()
+    if not token:
+        raise ValueError("Le token Telegram est obligatoire.")
+    if not destination:
+        raise ValueError("Le chat_id Telegram est obligatoire.")
+    if not message.strip():
+        raise ValueError("Le message Telegram est vide.")
+
+    try:
+        response = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": destination, "text": message},
+            timeout=15,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise ValueError(f"Impossible d'envoyer la notification Telegram: {exc}") from exc
+
+    payload = response.json()
+    if not payload.get("ok"):
+        description = payload.get("description", "erreur inconnue")
+        raise ValueError(f"Telegram a refuse le message: {description}")
 
 
 @st.cache_resource
