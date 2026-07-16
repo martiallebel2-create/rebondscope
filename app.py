@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import date, timedelta
 from textwrap import dedent
 from uuid import uuid4
@@ -10,6 +11,7 @@ import streamlit as st
 from auto_levels import AutoLevelConfig, TRACKED_SYMBOLS, build_auto_level_row
 from exchange_rate_store import get_cached_eur_usd_rate, load_cached_eur_usd_rate
 from market_data import download_latest_quote, download_prices
+from notifier import send_telegram_message
 
 
 APP_NAME = "RebondScope"
@@ -395,6 +397,7 @@ def render_simple_dashboard() -> None:
     if eur_rate_note:
         st.caption(eur_rate_note)
     render_simple_dashboard_table(rows_df)
+    render_telegram_alerts(rows_df)
 
 
 def render_simple_dashboard_table(rows: pd.DataFrame) -> None:
@@ -553,6 +556,200 @@ def format_numeric(value: object, suffix: str = "", decimals: int = 2) -> str:
     if pd.isna(numeric):
         return "-"
     return f"{float(numeric):.{decimals}f}{suffix}"
+
+
+def render_telegram_alerts(rows: pd.DataFrame) -> None:
+    st.markdown("#### Alertes Telegram")
+    with st.expander("Programmer mes alertes Telegram", expanded=True):
+        token = get_telegram_bot_token()
+        st.caption(
+            "1. Colle ton chat_id numerique Telegram. 2. Choisis les actions. "
+            "3. Clique sur Envoyer un test Telegram."
+        )
+
+        chat_id = st.text_input(
+            "Mon chat_id Telegram",
+            value=str(st.session_state.get("telegram_chat_id", "")),
+            placeholder="Exemple: 123456789",
+            help="Mets uniquement le numero donne par @userinfobot. Pas de @, pas de pseudo.",
+            key="telegram_chat_id_input",
+        ).strip()
+        st.session_state["telegram_chat_id"] = chat_id
+
+        if not token:
+            st.warning(
+                "Le bot Telegram RebondScope n'est pas encore configure. "
+                "Le champ chat_id reste utilisable, mais l'envoi sera bloque tant que "
+                "TELEGRAM_BOT_TOKEN n'est pas reconnu dans les secrets Streamlit."
+            )
+
+        st.caption(
+            "Chaque utilisateur peut mettre son propre chat_id. "
+            "Les alertes fonctionnent tant que la page RebondScope reste ouverte ou se rafraichit."
+        )
+
+        sorted_rows = rows.sort_values(["nom", "ticker"], ignore_index=True)
+        options = [f"{row['nom']} ({row['ticker']})" for _, row in sorted_rows.iterrows()]
+        default_options = options[:]
+        selected_labels = st.multiselect("Actions a surveiller", options, default=default_options)
+        selected_tickers = {
+            str(label).rsplit("(", 1)[-1].replace(")", "").strip()
+            for label in selected_labels
+            if "(" in str(label)
+        }
+
+        alert_types = st.multiselect(
+            "Types d'alertes",
+            [
+                "Scenario interessant",
+                "Prix proche de l'entree",
+                "Resistance active proche",
+            ],
+            default=["Scenario interessant", "Prix proche de l'entree"],
+        )
+        proximity_pct = st.number_input(
+            "Marge de proximite (%)",
+            min_value=0.1,
+            value=0.5,
+            step=0.1,
+            help="Exemple: 0,5% veut dire que RebondScope previent un peu avant le niveau exact.",
+        )
+
+        button_cols = st.columns(2)
+        if button_cols[0].button("Envoyer un test Telegram", use_container_width=True):
+            if not chat_id:
+                st.error("Ajoute d'abord ton chat_id Telegram.")
+            elif not token:
+                st.error("Le token du bot Telegram n'est pas encore reconnu par l'application.")
+            else:
+                try:
+                    send_telegram_message(token, chat_id, "RebondScope - test Telegram OK.")
+                    st.success("Message test envoye.")
+                except ValueError as exc:
+                    st.error(str(exc))
+
+        if button_cols[1].button("Reinitialiser les alertes deja envoyees", use_container_width=True):
+            st.session_state["telegram_sent_alerts"] = set()
+            st.success("Les alertes de cette session ont ete reinitialisees.")
+
+        if not chat_id or not selected_tickers or not alert_types or not token:
+            st.info("Renseigne ton chat_id, choisis au moins une action et un type d'alerte.")
+            return
+
+        triggered = build_telegram_alert_candidates(
+            sorted_rows[sorted_rows["ticker"].isin(selected_tickers)],
+            set(alert_types),
+            float(proximity_pct),
+        )
+        if not triggered:
+            st.caption("Aucune alerte Telegram a envoyer pour l'instant.")
+            return
+
+        sent_alerts = st.session_state.setdefault("telegram_sent_alerts", set())
+        new_alerts = [alert for alert in triggered if alert["key"] not in sent_alerts]
+        st.write(f"Alertes detectees maintenant: {len(triggered)}")
+
+        for alert in triggered:
+            st.caption(alert["message"].replace("\n", " · "))
+
+        if not new_alerts:
+            st.caption("Ces alertes ont deja ete envoyees pendant cette session.")
+            return
+
+        for alert in new_alerts:
+            try:
+                send_telegram_message(token, chat_id, alert["message"])
+                sent_alerts.add(alert["key"])
+            except ValueError as exc:
+                st.error(str(exc))
+                return
+        st.success(f"{len(new_alerts)} alerte(s) Telegram envoyee(s).")
+
+
+def get_telegram_bot_token() -> str:
+    try:
+        token = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
+    except (FileNotFoundError, KeyError):
+        token = ""
+    return str(token or os.environ.get("TELEGRAM_BOT_TOKEN", "")).strip()
+
+
+def build_telegram_alert_candidates(
+    rows: pd.DataFrame,
+    alert_types: set[str],
+    proximity_pct: float,
+) -> list[dict[str, str]]:
+    alerts: list[dict[str, str]] = []
+    margin = max(proximity_pct, 0.0) / 100
+
+    for _, row in rows.iterrows():
+        ticker = str(row.get("ticker", "")).strip()
+        name = str(row.get("nom", ticker)).strip()
+        current = safe_float(row.get("prix_actuel_eur"))
+        entry = safe_float(row.get("entree_confirmation_eur"))
+        resistance_low = safe_float(row.get("resistance_active_bas_eur"))
+        status = str(row.get("statut", "")).strip()
+
+        if "Scenario interessant" in alert_types and status == "Interessant":
+            alerts.append(
+                {
+                    "key": f"{ticker}:status:{status}:{format_numeric(current)}",
+                    "message": (
+                        f"RebondScope - {name} ({ticker})\n"
+                        f"Scenario interessant detecte.\n"
+                        f"Cours: {format_numeric(current, ' EUR')}\n"
+                        f"Entree: {format_numeric(entry, ' EUR')}\n"
+                        f"Resistance active: {format_zone(row, 'resistance_active')}\n"
+                        f"Lecture: {row.get('explication', '-')}"
+                    ),
+                }
+            )
+
+        if (
+            "Prix proche de l'entree" in alert_types
+            and current is not None
+            and entry is not None
+            and current <= entry * (1 + margin)
+        ):
+            alerts.append(
+                {
+                    "key": f"{ticker}:entry:{format_numeric(entry)}:{format_numeric(current)}",
+                    "message": (
+                        f"RebondScope - {name} ({ticker})\n"
+                        f"Prix proche de l'entree.\n"
+                        f"Cours: {format_numeric(current, ' EUR')}\n"
+                        f"Entree: {format_numeric(entry, ' EUR')}\n"
+                        f"Stop: {format_numeric(row.get('stop_loss_eur'), ' EUR')}"
+                    ),
+                }
+            )
+
+        if (
+            "Resistance active proche" in alert_types
+            and current is not None
+            and resistance_low is not None
+            and current >= resistance_low * (1 - margin)
+        ):
+            alerts.append(
+                {
+                    "key": f"{ticker}:resistance:{format_numeric(resistance_low)}:{format_numeric(current)}",
+                    "message": (
+                        f"RebondScope - {name} ({ticker})\n"
+                        f"Resistance active proche.\n"
+                        f"Cours: {format_numeric(current, ' EUR')}\n"
+                        f"Resistance: {format_zone(row, 'resistance_active')}"
+                    ),
+                }
+            )
+
+    return alerts
+
+
+def safe_float(value: object) -> float | None:
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.isna(numeric):
+        return None
+    return float(numeric)
 
 
 @st.cache_resource
